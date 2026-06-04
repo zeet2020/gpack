@@ -26,17 +26,19 @@ shell, and icons — so it stays close to upstream as Wails evolves.
 
 ## Requirements
 
-- **Go ≥ 1.25** (Wails v3 requires it; `GOTOOLCHAIN=auto` fetches it automatically).
-- **[wails3](https://v3.wails.io) + [task](https://taskfile.dev)** on `$GOPATH/bin`
-  (gpack locates them by absolute path, so they don't need to be on `PATH`):
-  ```bash
-  go install github.com/go-task/task/v3/cmd/task@latest
-  # Linux (webkit2gtk-4.1): add -tags gtk3
-  go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.0.0-alpha.98
-  ```
-- **Platform webview**, needed to *run* built apps:
-  - Linux: `gtk3` + `webkit2gtk-4.1` (`libgtk-3-dev libwebkit2gtk-4.1-dev`)
-  - macOS: WKWebView (built in) · Windows: WebView2 (built in)
+gpack bootstraps its Go-side toolchain itself — **no `wails3` or `task` install needed**. To build
+apps you only need:
+
+- **A C compiler** (`gcc`/`clang`) — cgo links the webview.
+- **System webview dev libraries** (needed to build *and* run):
+  - **Linux:** gtk3 + webkit2gtk-4.1 → `sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev`
+    (or run `gpack … --install-deps` to attempt it). These are C libraries and cannot be
+    auto-built — same floor as Tauri/Electron.
+  - **macOS:** WKWebView (built in) · **Windows:** WebView2 (preinstalled on Win 11)
+
+Handled automatically: the **Go toolchain** (uses your `go` if ≥1.21 via `GOTOOLCHAIN=auto`, else
+downloads one into the gpack cache), the **Wails v3 module**, and typed **bindings** (`go run`,
+local-file only).
 
 ## Install
 

@@ -24,9 +24,6 @@ on:
         required: false
         default: ''
 
-env:
-  WAILS3_VERSION: v3.0.0-alpha.98
-
 jobs:
   build:
     strategy:
@@ -48,20 +45,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
 
-      - name: Install build tools (task)
-        run: go install github.com/go-task/task/v3/cmd/task@latest
-
-      - name: Install wails3 (Linux uses the gtk3 tag)
-        shell: bash
-        run: |
-          if [ "${{ runner.os }}" = "Linux" ]; then
-            go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}
-          else
-            go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}
-          fi
-
       - name: Install gpack
         run: go install ./cmd/gpack
+        # gpack self-generates the Wails v3 project and bootstraps the Go-side
+        # toolchain — no wails3/task install needed.
 
       - name: Build app
         shell: bash

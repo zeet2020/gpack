@@ -69,6 +69,7 @@ func registerFlags(cmd *cobra.Command) {
 	// gpack-specific
 	f.String("config", "", "Path to Pake-compatible JSON config file")
 	f.Bool("keep-tmp", false, "Keep generated Wails project directory after build")
+	f.Bool("install-deps", false, "Attempt to install missing system webview deps (Linux, apt+sudo)")
 	f.Bool("dry-run", false, "Resolve and print the config without building")
 }
 
@@ -219,6 +220,9 @@ func applyFlags(cmd *cobra.Command, cfg *config.AppConfig) error {
 	}
 	if changed("keep-tmp") {
 		cfg.KeepTmp, _ = f.GetBool("keep-tmp")
+	}
+	if changed("install-deps") {
+		cfg.InstallDeps, _ = f.GetBool("install-deps")
 	}
 	return nil
 }

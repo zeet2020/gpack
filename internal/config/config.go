@@ -88,6 +88,7 @@ type AppConfig struct {
 	OutDir            string
 	Platform          string // "current" | "darwin" | "windows" | "linux"
 	KeepTmp           bool
+	InstallDeps       bool // attempt to install missing system webview deps (apt)
 }
 
 // ---- Template helpers (consumed by the v3 project templates) ----
