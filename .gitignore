@@ -1,0 +1,22 @@
+# Build artifacts
+/gpack
+/gpack.exe
+/dist/
+/bin/
+*.exe
+
+# Go
+*.test
+*.out
+*.prof
+
+# Generated app projects / temp
+gpack-*/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

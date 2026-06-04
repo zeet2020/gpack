@@ -1,0 +1,81 @@
+name: Build App
+
+# Builds a native desktop app from a URL or a Pake JSON config, on macOS,
+# Windows and Linux, and uploads the binaries as artifacts. Trigger manually
+# from the Actions tab (mirrors Pake's online build).
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Target URL (ignored if a config file is committed and given below)'
+        required: false
+        default: 'https://example.com'
+      name:
+        description: 'Application name'
+        required: true
+        default: 'MyApp'
+      config:
+        description: 'Path to a committed Pake JSON config (optional, overrides url)'
+        required: false
+        default: ''
+      extra_args:
+        description: 'Extra gpack flags (e.g. --hide-title-bar --show-system-tray)'
+        required: false
+        default: ''
+
+env:
+  WAILS3_VERSION: v3.0.0-alpha.98
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Install Linux webview deps (gtk3 / webkit2gtk-4.1)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
+
+      - name: Install build tools (task)
+        run: go install github.com/go-task/task/v3/cmd/task@latest
+
+      - name: Install wails3 (Linux uses the gtk3 tag)
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "Linux" ]; then
+            go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}
+          else
+            go install github.com/wailsapp/wails/v3/cmd/wails3@${WAILS3_VERSION}
+          fi
+
+      - name: Install gpack
+        run: go install ./cmd/gpack
+
+      - name: Build app
+        shell: bash
+        run: |
+          export PATH="$PATH:$(go env GOPATH)/bin"
+          mkdir -p dist
+          if [ -n "${{ inputs.config }}" ]; then
+            gpack --config "${{ inputs.config }}" --name "${{ inputs.name }}" --out dist ${{ inputs.extra_args }}
+          else
+            gpack "${{ inputs.url }}" --name "${{ inputs.name }}" --out dist ${{ inputs.extra_args }}
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.name }}-${{ runner.os }}
+          path: dist/*
+          if-no-files-found: error
