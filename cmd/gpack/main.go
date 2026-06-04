@@ -18,6 +18,9 @@ import (
 	"gpack/internal/config"
 )
 
+// version is the gpack tool version (distinct from --app-version, the built app's version).
+const version = "0.1.0"
+
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -27,8 +30,9 @@ func main() {
 
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "gpack [url] [flags]",
-		Short: "Turn any URL into a native desktop app (Go + Wails v3)",
+		Use:     "gpack [url] [flags]",
+		Version: version,
+		Short:   "Turn any URL into a native desktop app (Go + Wails v3)",
 		Long: "gpack builds a native desktop application from a web URL. It accepts a\n" +
 			"Pake-compatible JSON config (--config) or CLI flags, generates a throwaway\n" +
 			"Wails v3 project, builds it, and copies out the binary.",
