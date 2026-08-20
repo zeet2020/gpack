@@ -4,6 +4,9 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  # Callable so release.yml can gate publishing on this exact job, rather than
+  # keeping a second copy of these checks that can drift.
+  workflow_call:
 
 jobs:
   build:

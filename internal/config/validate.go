@@ -12,7 +12,7 @@ func (c *AppConfig) Validate() (warnings []string, err error) {
 		return nil, fmt.Errorf("a target URL is required (pass it as an argument, via --config, or with the windows[0].url field)")
 	}
 
-	if !c.UseLocalFile && c.Window.URLType == "web" {
+	if !c.IsLocal() {
 		if !strings.HasPrefix(c.Window.URL, "http://") && !strings.HasPrefix(c.Window.URL, "https://") {
 			warnings = append(warnings, fmt.Sprintf("url %q has no http(s) scheme; assuming https", c.Window.URL))
 			c.Window.URL = "https://" + c.Window.URL
@@ -30,6 +30,10 @@ func (c *AppConfig) Validate() (warnings []string, err error) {
 		} else {
 			c.Window.Zoom = 200
 		}
+	}
+
+	if c.Window.HideOnClose && !c.AnyTray() {
+		warnings = append(warnings, "hide_on_close set but no system tray enabled; closing the window would hide it with no way to restore or quit — enable --show-system-tray")
 	}
 
 	if c.Window.StartToTray && !c.AnyTray() {

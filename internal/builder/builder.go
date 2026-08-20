@@ -43,6 +43,12 @@ func Build(cfg *config.AppConfig) error {
 		}
 	}
 
+	// --debug streams subprocess output live; otherwise it is only shown on failure.
+	var verbose io.Writer
+	if cfg.Debug {
+		verbose = os.Stderr
+	}
+
 	proj, err := os.MkdirTemp("", "gpack-*")
 	if err != nil {
 		return err
@@ -58,7 +64,7 @@ func Build(cfg *config.AppConfig) error {
 	// --use-local-file serves the user's directory/file from the asset origin;
 	// the window then loads "/" instead of a remote URL.
 	localSrc := cfg.Window.URL
-	if cfg.UseLocalFile {
+	if cfg.IsLocal() {
 		cfg.Window.URL = "/"
 	}
 
@@ -74,7 +80,7 @@ func Build(cfg *config.AppConfig) error {
 	if err := os.WriteFile(filepath.Join(proj, "main.go"), []byte(mainSrc), 0644); err != nil {
 		return err
 	}
-	if cfg.UseLocalFile {
+	if cfg.IsLocal() {
 		if err := copyLocalFrontend(localSrc, proj); err != nil {
 			return err
 		}
@@ -96,20 +102,20 @@ func Build(cfg *config.AppConfig) error {
 
 	// 3. Resolve dependencies (downloads the Wails v3 module + Go 1.25 toolchain).
 	step("Resolving dependencies (go mod tidy)")
-	if out, err := runner.Run(proj, env, goPath, "mod", "tidy"); err != nil {
-		return fmt.Errorf("go mod tidy: %w\n%s", err, out)
+	if out, err := runner.Run(proj, env, verbose, goPath, "mod", "tidy"); err != nil {
+		return fmt.Errorf("go mod tidy: %w%s", err, unstreamed(out, verbose))
 	}
 
 	// 3b. Typed JS bindings for the local-file bridge, via `go run` (no wails3 install).
-	if cfg.UseLocalFile {
+	if cfg.IsLocal() {
 		step("Generating bindings")
 		args := []string{"run"}
 		if targetOS == "linux" {
 			args = append(args, "-tags", "gtk3")
 		}
 		args = append(args, "github.com/wailsapp/wails/v3/cmd/wails3@"+wailsVersion, "generate", "bindings")
-		if out, err := runner.Run(proj, env, goPath, args...); err != nil {
-			fmt.Fprintln(os.Stderr, "warning: generate bindings failed; the frontend may lack typed bindings\n"+out)
+		if out, err := runner.Run(proj, env, verbose, goPath, args...); err != nil {
+			fmt.Fprintln(os.Stderr, "warning: generate bindings failed; the frontend may lack typed bindings"+unstreamed(out, verbose))
 		}
 	}
 
@@ -125,8 +131,8 @@ func Build(cfg *config.AppConfig) error {
 		args = append(args, "-tags", "gtk3") // webkit2gtk-4.1 path
 	}
 	args = append(args, "-o", binPath, ".")
-	if out, err := runner.Run(proj, env, goPath, args...); err != nil {
-		return fmt.Errorf("build failed: %w\n%s", err, out)
+	if out, err := runner.Run(proj, env, verbose, goPath, args...); err != nil {
+		return fmt.Errorf("build failed: %w%s", err, unstreamed(out, verbose))
 	}
 
 	// 5. Copy the artifact to the output directory.
@@ -221,3 +227,12 @@ func copyFile(src, dst string) error {
 }
 
 func step(msg string) { fmt.Fprintln(os.Stderr, "→ "+msg) }
+
+// unstreamed returns captured subprocess output for an error message, or "" when
+// verbose already streamed it live — otherwise a failure prints the whole log twice.
+func unstreamed(out string, verbose io.Writer) string {
+	if verbose != nil {
+		return ""
+	}
+	return "\n" + out
+}

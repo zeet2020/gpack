@@ -52,13 +52,22 @@ jobs:
 
       - name: Build app
         shell: bash
+        # Inputs go through env, never interpolated into the script body: a
+        # ${{ }} expansion is pasted in as source and would run as shell.
+        env:
+          URL: ${{ inputs.url }}
+          APP_NAME: ${{ inputs.name }}
+          CONFIG: ${{ inputs.config }}
+          EXTRA_ARGS: ${{ inputs.extra_args }}
         run: |
           export PATH="$PATH:$(go env GOPATH)/bin"
           mkdir -p dist
-          if [ -n "${{ inputs.config }}" ]; then
-            gpack --config "${{ inputs.config }}" --name "${{ inputs.name }}" --out dist ${{ inputs.extra_args }}
+          # $EXTRA_ARGS is deliberately unquoted so it splits into separate
+          # flags; expansion still never re-parses metacharacters as syntax.
+          if [ -n "$CONFIG" ]; then
+            gpack --config "$CONFIG" --name "$APP_NAME" --out dist $EXTRA_ARGS
           else
-            gpack "${{ inputs.url }}" --name "${{ inputs.name }}" --out dist ${{ inputs.extra_args }}
+            gpack "$URL" --name "$APP_NAME" --out dist $EXTRA_ARGS
           fi
 
       - uses: actions/upload-artifact@v4

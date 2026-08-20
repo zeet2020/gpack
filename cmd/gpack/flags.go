@@ -3,8 +3,10 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	"gpack/internal/config"
 )
@@ -33,11 +35,10 @@ func registerFlags(cmd *cobra.Command) {
 	f.String("title", "", "Window title bar text")
 
 	// Web behaviour
-	f.String("user-agent", "", "Custom User-Agent string (default: platform Safari/Chrome)")
+	f.String("user-agent", "", "Custom User-Agent (JS-level override, not the HTTP header; unset by default)")
 	f.Bool("disabled-web-shortcuts", false, "Disable built-in keyboard shortcuts")
 	f.String("activation-shortcut", "", "Global hotkey to bring window to front")
 	f.Bool("incognito", false, "Ephemeral session (no persistent cookies/storage)")
-	f.Bool("wasm", false, "Enable WASM (no-op in gpack; always enabled)")
 	f.Bool("enable-drag-drop", false, "Enable native drag-and-drop")
 	f.Bool("force-internal-navigation", false, "Keep all links inside the app window")
 	f.Bool("enable-find", false, "Enable in-page find bar (Cmd/Ctrl+F)")
@@ -57,11 +58,6 @@ func registerFlags(cmd *cobra.Command) {
 
 	// Build
 	f.String("app-version", "1.0.0", "Application version string")
-	f.String("targets", "", "Build target (dmg|app|deb|appimage|msi|...)")
-	f.Bool("multi-arch", false, "Build universal binary (macOS only)")
-	f.Bool("iterative-build", false, "Fast rebuild (skip installer, no clean)")
-	f.Bool("keep-binary", false, "Also output standalone binary alongside installer")
-	f.String("installer-language", "en-US", "Windows installer language code")
 	f.Bool("debug", false, "Enable DevTools and verbose build output")
 	f.String("out", ".", "Output directory for built artifact")
 	f.String("platform", "current", "Cross-compile target: current|darwin|windows|linux")
@@ -71,12 +67,62 @@ func registerFlags(cmd *cobra.Command) {
 	f.Bool("keep-tmp", false, "Keep generated Wails project directory after build")
 	f.Bool("install-deps", false, "Attempt to install missing system webview deps (Linux, apt+sudo)")
 	f.Bool("dry-run", false, "Resolve and print the config without building")
+
+	// Accepted for Pake CLI compatibility, but not implemented: registering them
+	// keeps existing command lines working, and using one warns.
+	for _, u := range unimplemented {
+		if u.isBool {
+			f.Bool(u.name, false, "(not implemented) "+u.why)
+		} else {
+			f.String(u.name, "", "(not implemented) "+u.why)
+		}
+	}
+}
+
+// unimplemented lists Pake flags gpack parses but ignores. Slice, not map, so the
+// warnings come out in a stable order.
+var unimplemented = []struct {
+	name   string
+	why    string
+	isBool bool
+}{
+	{"wasm", "system webviews always enable WASM", true},
+	{"targets", "gpack emits a raw binary, not an installer", false},
+	{"multi-arch", "universal binaries are not wired up", true},
+	{"iterative-build", "every build is a fresh one", true},
+	{"keep-binary", "the raw binary is always the output", true},
+	{"installer-language", "no installer is produced", false},
+}
+
+// unimplementedWarnings reports which no-op compatibility flags the user asked
+// for. Only a flag that requests something warrants a warning: --wasm=false and
+// --targets="" ask for nothing, so they get no complaint.
+func unimplementedWarnings(f *pflag.FlagSet) []string {
+	var out []string
+	for _, u := range unimplemented {
+		if !f.Changed(u.name) {
+			continue
+		}
+		if u.isBool {
+			if on, _ := f.GetBool(u.name); !on {
+				continue
+			}
+		} else if v, _ := f.GetString(u.name); strings.TrimSpace(v) == "" {
+			continue
+		}
+		out = append(out, fmt.Sprintf("--%s is not implemented; %s", u.name, u.why))
+	}
+	return out
 }
 
 // applyFlags overrides config fields for flags the user explicitly set.
 func applyFlags(cmd *cobra.Command, cfg *config.AppConfig) error {
 	f := cmd.Flags()
 	changed := func(name string) bool { return f.Changed(name) }
+
+	for _, w := range unimplementedWarnings(f) {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
 
 	if changed("name") {
 		cfg.Name, _ = f.GetString("name")
@@ -138,11 +184,6 @@ func applyFlags(cmd *cobra.Command, cfg *config.AppConfig) error {
 	if changed("incognito") {
 		cfg.Window.Incognito, _ = f.GetBool("incognito")
 	}
-	if changed("wasm") {
-		if on, _ := f.GetBool("wasm"); on {
-			fmt.Fprintln(os.Stderr, "warning: --wasm is a no-op; system webviews always enable WASM")
-		}
-	}
 	if changed("enable-drag-drop") {
 		cfg.Window.EnableDragDrop, _ = f.GetBool("enable-drag-drop")
 	}
@@ -177,37 +218,28 @@ func applyFlags(cmd *cobra.Command, cfg *config.AppConfig) error {
 	if changed("inject") {
 		paths, _ := f.GetStringArray("inject")
 		for _, p := range paths {
-			body, err := os.ReadFile(p)
+			body, err := config.ReadInject(p)
 			if err != nil {
 				return fmt.Errorf("--inject %s: %w", p, err)
 			}
-			cfg.Inject = append(cfg.Inject, string(body))
+			cfg.Inject = append(cfg.Inject, body)
 		}
 	}
 	if changed("proxy-url") {
 		cfg.ProxyURL, _ = f.GetString("proxy-url")
 	}
 	if changed("use-local-file") {
-		cfg.UseLocalFile, _ = f.GetBool("use-local-file")
+		// Writes the same field the config and positional argument write, so
+		// "local" and "web" can never disagree with the URL they describe.
+		if local, _ := f.GetBool("use-local-file"); local {
+			cfg.Window.URLType = "local"
+		} else {
+			cfg.Window.URLType = "web"
+		}
 	}
 
 	if changed("app-version") {
 		cfg.AppVersion, _ = f.GetString("app-version")
-	}
-	if changed("targets") {
-		cfg.Targets, _ = f.GetString("targets")
-	}
-	if changed("multi-arch") {
-		cfg.MultiArch, _ = f.GetBool("multi-arch")
-	}
-	if changed("iterative-build") {
-		cfg.IterativeBuild, _ = f.GetBool("iterative-build")
-	}
-	if changed("keep-binary") {
-		cfg.KeepBinary, _ = f.GetBool("keep-binary")
-	}
-	if changed("installer-language") {
-		cfg.InstallerLanguage, _ = f.GetString("installer-language")
 	}
 	if changed("debug") {
 		cfg.Debug, _ = f.GetBool("debug")

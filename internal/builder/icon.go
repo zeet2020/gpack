@@ -52,14 +52,20 @@ func ResolveAppIcon(cfg *config.AppConfig) []byte {
 // ResolveTrayIcon returns the tray icon PNG: the configured system_tray_path if
 // present, otherwise the app icon.
 func ResolveTrayIcon(cfg *config.AppConfig, appIcon []byte) []byte {
-	if cfg.SystemTrayPath != "" {
-		if raw, err := os.ReadFile(cfg.SystemTrayPath); err == nil {
-			if pngBytes, err := normalizePNG(raw); err == nil {
-				return pngBytes
-			}
-		}
+	if cfg.SystemTrayPath == "" {
+		return appIcon
 	}
-	return appIcon
+	raw, err := os.ReadFile(cfg.SystemTrayPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not read tray icon, using the app icon:", err)
+		return appIcon
+	}
+	pngBytes, err := normalizePNG(raw)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "warning: could not decode tray icon, using the app icon:", err)
+		return appIcon
+	}
+	return pngBytes
 }
 
 func loadIconSource(src string) ([]byte, error) {

@@ -17,12 +17,13 @@ gpack https://news.ycombinator.com --name HN --out ./dist
 ## How it works
 
 ```
-gpack → wails3 init (scaffold) → render main.go → fetch/convert icon
+gpack → generate project (main.go + go.mod + frontend shell) → fetch/convert icon
       → go mod tidy → [wails3 generate bindings] → go build → copy binary to --out
 ```
 
-It rides Wails' own project scaffolding and only injects the generated `main.go`, a frontend
-shell, and icons — so it stays close to upstream as Wails evolves.
+The generated project is a single `main.go` against the pinned Wails module
+(`v3.0.0-beta.10`), so there is no scaffolding to keep in sync — one const in
+`internal/builder/bootstrap.go` moves the whole toolchain.
 
 ## Requirements
 
@@ -37,8 +38,8 @@ apps you only need:
   - **macOS:** WKWebView (built in) · **Windows:** WebView2 (preinstalled on Win 11)
 
 Handled automatically: the **Go toolchain** (uses your `go` if ≥1.21 via `GOTOOLCHAIN=auto`, else
-downloads one into the gpack cache), the **Wails v3 module**, and typed **bindings** (`go run`,
-local-file only).
+downloads one into the gpack cache, verified against the SHA-256 in go.dev's release index before
+it is unpacked), the **Wails v3 module**, and typed **bindings** (`go run`, local-file only).
 
 ## Install
 
@@ -64,6 +65,9 @@ gpack https://weekly.tw93.fun/en --name Weekly --hide-title-bar --out ./dist
 ```bash
 gpack --config examples/weekly.json --name Weekly --out ./dist
 ```
+Paths inside a config (`inject`, `system_tray_path`, and a `url_type: "local"` url) resolve
+relative to the config file, not the working directory. `inject` entries are file paths —
+`.css` files land in the stylesheet slot, everything else is injected as JS.
 
 **A local HTML app** (gets a JS→Go native bridge — see [Bound methods](#bound-methods)):
 ```bash
@@ -102,7 +106,7 @@ When `--icon` is omitted, gpack auto-fetches the site's favicon.
 ### Web behaviour
 | Flag | Default | Description |
 |---|---|---|
-| `--user-agent` | platform default | UA override (JS-level, best-effort) |
+| `--user-agent` | unset | UA override (JS-level only — see [Limitations](#limitations)) |
 | `--disabled-web-shortcuts` | false | Drop built-in keyboard shortcuts |
 | `--enable-find` | false | In-page find bar (Cmd/Ctrl+F) |
 | `--force-internal-navigation` | false | Keep links inside the window |
@@ -124,7 +128,7 @@ When `--icon` is omitted, gpack auto-fetches the site's favicon.
 |---|---|---|
 | `--out` | `.` | Output directory for the binary |
 | `--app-version` | 1.0.0 | App version |
-| `--debug` | false | Enable DevTools |
+| `--debug` | false | Enable DevTools; stream build output live |
 | `--use-local-file` | false | Treat the argument as a local dir/file and embed it |
 | `--config` | "" | Pake JSON config file |
 | `--keep-tmp` | false | Keep the generated project (debugging) |
@@ -160,7 +164,10 @@ window.go.main.GpackBridge.Quit();
 - Builds for the **current OS only** (Wails uses cgo; cross-compile is not wired). Use the
   Build-App workflow to produce all three platforms.
 - Output is a raw binary, not a `.deb`/`.dmg`/`.msi` installer yet.
-- `--user-agent` is a JS override; it does not change the HTTP `User-Agent` header.
+- `--user-agent` is a JS override applied after load; it does not change the HTTP `User-Agent`
+  header, and there is no default UA — unset means the webview's own.
+- These Pake CLI flags are **parsed but ignored** (using one prints a warning): `--targets`,
+  `--multi-arch`, `--iterative-build`, `--keep-binary`, `--installer-language`, `--wasm`.
 - `--incognito`, `--proxy-url`, and `--activation-shortcut` are best-effort and may warn.
 - `multi_window` / `new_window` from Pake configs are not supported (single primary window).
 

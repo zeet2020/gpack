@@ -11,7 +11,12 @@ permissions:
   contents: write
 
 jobs:
+  # A tag push must not publish binaries that fail gofmt/vet/build/test.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   build:
+    needs: test
     runs-on: ubuntu-latest
     strategy:
       matrix:

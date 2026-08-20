@@ -3,6 +3,8 @@ package builder
 import (
 	"archive/tar"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -17,7 +19,7 @@ import (
 )
 
 // wailsVersion is the pinned Wails v3 module/CLI version gpack builds against.
-const wailsVersion = "v3.0.0-alpha.98"
+const wailsVersion = "v3.0.0-beta.10"
 
 // minGoMinor is the lowest Go 1.x that supports automatic toolchain switching
 // (GOTOOLCHAIN), which lets an older local Go fetch the 1.25 the project needs.
@@ -88,34 +90,30 @@ func parseGoMinor(versionOutput string) (int, bool) {
 	return 0, false
 }
 
-// downloadGo fetches the latest stable Go tarball for this platform and extracts
-// it under the gpack cache, returning the path to the `go` binary.
+// downloadGo fetches the latest stable Go tarball for this platform, verifies it
+// against the SHA-256 published in go.dev's release index, and extracts it under
+// the gpack cache, returning the path to the `go` binary. gpack executes this
+// toolchain, so the archive is never unpacked before the digest matches.
 func downloadGo() (string, error) {
-	ver, err := latestGoVersion()
+	archive, err := latestGoArchive()
 	if err != nil {
 		return "", err
 	}
-	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("auto-download supports tar.gz platforms; install %s manually on Windows", ver)
-	}
 
-	url := fmt.Sprintf("https://go.dev/dl/%s.%s-%s.tar.gz", ver, runtime.GOOS, runtime.GOARCH)
 	dest := cacheDir()
 	if err := os.MkdirAll(dest, 0755); err != nil {
 		return "", err
 	}
-	_ = os.RemoveAll(filepath.Join(dest, "go"))
 
-	client := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := client.Get(url)
+	tarball, err := fetchVerified("https://go.dev/dl/"+archive.Filename, archive.SHA256)
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	if err := extractTarGz(resp.Body, dest); err != nil {
+	defer os.Remove(tarball.Name())
+	defer tarball.Close()
+
+	_ = os.RemoveAll(filepath.Join(dest, "go"))
+	if err := extractTarGz(tarball, dest); err != nil {
 		return "", err
 	}
 
@@ -126,26 +124,95 @@ func downloadGo() (string, error) {
 	return goBin, nil
 }
 
-func latestGoVersion() (string, error) {
+// fetchVerified downloads url to a temp file, hashing as it streams, and returns
+// the file rewound to the start. A digest mismatch is an error and the partial
+// download is discarded — nothing is extracted or run.
+func fetchVerified(url, wantSHA256 string) (*os.File, error) {
+	client := &http.Client{Timeout: 30 * time.Minute}
+	resp, err := client.Get(url)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("GET %s: %s", url, resp.Status)
+	}
+
+	f, err := os.CreateTemp("", "gpack-go-*.tar.gz")
+	if err != nil {
+		return nil, err
+	}
+	discard := func() {
+		f.Close()
+		os.Remove(f.Name())
+	}
+
+	sum := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(f, sum), resp.Body); err != nil {
+		discard()
+		return nil, err
+	}
+	if got := hex.EncodeToString(sum.Sum(nil)); got != wantSHA256 {
+		discard()
+		return nil, fmt.Errorf("checksum mismatch for %s:\n  want %s\n  got  %s\nrefusing to install this toolchain", url, wantSHA256, got)
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		discard()
+		return nil, err
+	}
+	return f, nil
+}
+
+// goRelease is the subset of go.dev/dl's JSON index that gpack reads.
+type goRelease struct {
+	Version string   `json:"version"`
+	Stable  bool     `json:"stable"`
+	Files   []goFile `json:"files"`
+}
+
+type goFile struct {
+	Filename string `json:"filename"`
+	OS       string `json:"os"`
+	Arch     string `json:"arch"`
+	Kind     string `json:"kind"`
+	SHA256   string `json:"sha256"`
+}
+
+func latestGoArchive() (goFile, error) {
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get("https://go.dev/dl/?mode=json")
 	if err != nil {
-		return "", err
+		return goFile{}, err
 	}
 	defer resp.Body.Close()
-	var releases []struct {
-		Version string `json:"version"`
-		Stable  bool   `json:"stable"`
-	}
+	var releases []goRelease
 	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
-		return "", err
+		return goFile{}, err
 	}
+	return pickArchive(releases, runtime.GOOS, runtime.GOARCH)
+}
+
+// pickArchive finds the newest stable .tar.gz build for goos/goarch that carries
+// a checksum. Releases arrive newest-first.
+func pickArchive(releases []goRelease, goos, goarch string) (goFile, error) {
 	for _, r := range releases {
-		if r.Stable {
-			return r.Version, nil
+		if !r.Stable {
+			continue
+		}
+		for _, f := range r.Files {
+			if f.Kind != "archive" || f.OS != goos || f.Arch != goarch {
+				continue
+			}
+			if !strings.HasSuffix(f.Filename, ".tar.gz") {
+				continue // Windows ships .zip; extractTarGz cannot read it
+			}
+			if f.SHA256 == "" {
+				return goFile{}, fmt.Errorf("%s: release index has no sha256; refusing to install unverified", f.Filename)
+			}
+			return f, nil
 		}
 	}
-	return "", fmt.Errorf("no stable Go release found")
+	return goFile{}, fmt.Errorf("no stable Go tar.gz build for %s/%s; install Go from https://go.dev/dl manually", goos, goarch)
 }
 
 func extractTarGz(r io.Reader, dest string) error {

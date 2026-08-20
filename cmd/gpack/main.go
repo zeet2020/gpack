@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -46,42 +47,9 @@ func newRootCmd() *cobra.Command {
 }
 
 func run(cmd *cobra.Command, args []string) error {
-	cfg := config.Defaults()
-
-	// 1. Pake JSON config (lowest precedence above defaults).
-	if path, _ := cmd.Flags().GetString("config"); path != "" {
-		pj, err := config.LoadPakeJSON(path)
-		if err != nil {
-			return err
-		}
-		for _, w := range cfg.Apply(pj) {
-			fmt.Fprintln(os.Stderr, "warning:", w)
-		}
-	}
-
-	// 2. Positional URL argument overrides the config's URL.
-	if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
-		cfg.Window.URL = args[0]
-	}
-
-	// 3. Explicit CLI flags override individual fields.
-	if err := applyFlags(cmd, cfg); err != nil {
-		return err
-	}
-
-	// 4. Derive Name (from URL host if absent) and SafeName.
-	if cfg.Name == "" {
-		cfg.Name = deriveName(cfg.Window.URL)
-	}
-	cfg.Sanitise()
-
-	// 5. Validate.
-	warnings, err := cfg.Validate()
+	cfg, err := resolveConfig(cmd, args)
 	if err != nil {
 		return err
-	}
-	for _, w := range warnings {
-		fmt.Fprintln(os.Stderr, "warning:", w)
 	}
 
 	// --dry-run inspects the resolved config without building.
@@ -94,6 +62,56 @@ func run(cmd *cobra.Command, args []string) error {
 	return builder.Build(cfg)
 }
 
+// resolveConfig layers the Pake JSON config, the positional URL and the CLI flags
+// over the defaults, in that precedence order, then validates the result.
+func resolveConfig(cmd *cobra.Command, args []string) (*config.AppConfig, error) {
+	cfg := config.Defaults()
+
+	// 1. Pake JSON config (lowest precedence above defaults).
+	if path, _ := cmd.Flags().GetString("config"); path != "" {
+		pj, err := config.LoadPakeJSON(path)
+		if err != nil {
+			return nil, err
+		}
+		warnings, err := cfg.Apply(pj)
+		for _, w := range warnings {
+			fmt.Fprintln(os.Stderr, "warning:", w)
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// 2. A positional argument replaces the config's URL — and with it the config's
+	// url_type, which described the URL being replaced. --use-local-file runs after
+	// this and can still mark the new one local.
+	if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
+		cfg.Window.URL = args[0]
+		cfg.Window.URLType = "web"
+	}
+
+	// 3. Explicit CLI flags override individual fields.
+	if err := applyFlags(cmd, cfg); err != nil {
+		return nil, err
+	}
+
+	// 4. Derive Name (from URL host if absent) and SafeName.
+	if cfg.Name == "" {
+		cfg.Name = deriveName(cfg.Window.URL)
+	}
+	cfg.Sanitise()
+
+	// 5. Validate.
+	warnings, err := cfg.Validate()
+	if err != nil {
+		return nil, err
+	}
+	for _, w := range warnings {
+		fmt.Fprintln(os.Stderr, "warning:", w)
+	}
+	return cfg, nil
+}
+
 // deriveName produces a friendly app name from a URL hostname, e.g.
 // https://weekly.tw93.fun/en -> "Weekly".
 func deriveName(raw string) string {
@@ -101,17 +119,28 @@ func deriveName(raw string) string {
 		return "App"
 	}
 	u, err := url.Parse(raw)
-	host := raw
-	if err == nil && u.Hostname() != "" {
-		host = u.Hostname()
+	if err != nil || u.Hostname() == "" {
+		// Not a remote URL — it's a local path; name the app after the file.
+		base := strings.TrimSuffix(filepath.Base(raw), filepath.Ext(raw))
+		if base == "." || base == string(filepath.Separator) {
+			return "App"
+		}
+		return title(base)
 	}
+	host := u.Hostname()
 	host = strings.TrimPrefix(host, "www.")
 	label := host
 	if i := strings.IndexByte(host, '.'); i > 0 {
 		label = host[:i]
 	}
-	if label == "" {
+	return title(label)
+}
+
+// title upper-cases the first rune, leaving the rest alone.
+func title(s string) string {
+	r := []rune(s)
+	if len(r) == 0 {
 		return "App"
 	}
-	return strings.ToUpper(label[:1]) + label[1:]
+	return strings.ToUpper(string(r[0])) + string(r[1:])
 }

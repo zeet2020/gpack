@@ -72,7 +72,7 @@ func main() {
 	})
 	_ = win
 
-	{{- if .Cfg.UseLocalFile }}
+	{{- if .Cfg.IsLocal }}
 	// Local (embedded) content is served from the app's own asset origin, so the
 	// binding bridge is reachable from the page. (Remote URLs cannot reach it.)
 	app.RegisterService(application.NewService(&GpackBridge{app: app, win: win}))
@@ -101,7 +101,7 @@ func main() {
 		log.Fatal(err)
 	}
 }
-{{- if .Cfg.UseLocalFile }}
+{{- if .Cfg.IsLocal }}
 
 // GpackBridge exposes native capabilities to a local (embedded) frontend via
 // Wails bindings: call e.g. window.go.main.GpackBridge.OpenExternal(url) from JS.

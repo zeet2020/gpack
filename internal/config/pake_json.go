@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 // PakeJSON is the on-disk Pake configuration format. gpack accepts these files
@@ -25,6 +27,10 @@ type PakeJSON struct {
 	ProxyURL       string   `json:"proxy_url"`
 	MultiInstance  bool     `json:"multi_instance"`
 	MultiWindow    bool     `json:"multi_window"`
+
+	// dir is the directory holding the config file; relative paths inside the
+	// config (inject, system_tray_path) resolve against it.
+	dir string
 }
 
 // PakeWindow mirrors a single entry of the Pake "windows" array.
@@ -35,7 +41,7 @@ type PakeWindow struct {
 	Fullscreen           bool   `json:"fullscreen"`
 	Width                int    `json:"width"`
 	Height               int    `json:"height"`
-	Resizable            bool   `json:"resizable"`
+	Resizable            *bool  `json:"resizable"` // pointer: absent must not override the true default
 	AlwaysOnTop          bool   `json:"always_on_top"`
 	DarkMode             bool   `json:"dark_mode"`
 	ActivationShortcut   string `json:"activation_shortcut"`
@@ -65,18 +71,45 @@ func LoadPakeJSON(path string) (*PakeJSON, error) {
 	if len(pj.Windows) == 0 {
 		return nil, fmt.Errorf("config %s: \"windows\" array is empty", path)
 	}
+	pj.dir = filepath.Dir(path)
 	return &pj, nil
+}
+
+// resolve makes a config-relative path absolute against the config's directory.
+func (pj *PakeJSON) resolve(path string) string {
+	if path == "" || pj.dir == "" || filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(pj.dir, path)
+}
+
+// ReadInject loads a JS or CSS file for injection. CSS files are tagged with the
+// /*css*/ marker so the builder routes them to the stylesheet slot.
+func ReadInject(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	if strings.EqualFold(filepath.Ext(path), ".css") {
+		return "/*css*/" + string(body), nil
+	}
+	return string(body), nil
 }
 
 // Apply merges a parsed Pake config onto an AppConfig (over defaults). Only
 // windows[0] is used in v1 (single primary window). Unsupported fields produce
-// warnings via the returned slice rather than errors.
-func (c *AppConfig) Apply(pj *PakeJSON) (warnings []string) {
+// warnings via the returned slice rather than errors; an unreadable inject file
+// is a hard error.
+func (c *AppConfig) Apply(pj *PakeJSON) (warnings []string, err error) {
 	w := pj.Windows[0]
 
 	c.Window.URL = w.URL
 	if w.URLType != "" {
 		c.Window.URLType = w.URLType
+	}
+	if c.IsLocal() {
+		// A local url is a path to embed, relative to the config file.
+		c.Window.URL = pj.resolve(w.URL)
 	}
 	c.Window.HideTitleBar = w.HideTitleBar
 	c.Window.Fullscreen = w.Fullscreen
@@ -86,7 +119,9 @@ func (c *AppConfig) Apply(pj *PakeJSON) (warnings []string) {
 	if w.Height > 0 {
 		c.Window.Height = w.Height
 	}
-	c.Window.Resizable = w.Resizable
+	if w.Resizable != nil {
+		c.Window.Resizable = *w.Resizable
+	}
 	c.Window.AlwaysOnTop = w.AlwaysOnTop
 	c.Window.DarkMode = w.DarkMode
 	c.Window.ActivationShortcut = w.ActivationShortcut
@@ -107,9 +142,17 @@ func (c *AppConfig) Apply(pj *PakeJSON) (warnings []string) {
 	c.SystemTray.MacOS = pj.SystemTray.MacOS
 	c.SystemTray.Linux = pj.SystemTray.Linux
 	c.SystemTray.Windows = pj.SystemTray.Windows
-	c.SystemTrayPath = pj.SystemTrayPath
+	c.SystemTrayPath = pj.resolve(pj.SystemTrayPath)
 
-	c.Inject = append(c.Inject, pj.Inject...)
+	// Pake's "inject" holds file paths, not source; read them here so the
+	// builder only ever sees content (same as the --inject flag).
+	for _, p := range pj.Inject {
+		body, readErr := ReadInject(pj.resolve(p))
+		if readErr != nil {
+			return warnings, fmt.Errorf("inject %s: %w", p, readErr)
+		}
+		c.Inject = append(c.Inject, body)
+	}
 	c.ProxyURL = pj.ProxyURL
 	c.MultiInstance = pj.MultiInstance
 
@@ -123,5 +166,5 @@ func (c *AppConfig) Apply(pj *PakeJSON) (warnings []string) {
 	if w.EnableWasm {
 		warnings = append(warnings, "enable_wasm: system webviews always support WASM; no toggle needed")
 	}
-	return warnings
+	return warnings, nil
 }

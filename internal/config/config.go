@@ -69,26 +69,20 @@ type AppConfig struct {
 	SystemTrayPath string
 
 	// Web behaviour
-	Inject           []string // JS/CSS file paths to inject on load
+	Inject           []string // JS/CSS source to inject on load, already read from disk
 	SafeDomain       string
 	IgnoreCertErrors bool
-	UseLocalFile     bool
 
 	// Instance
 	MultiInstance bool
 
 	// Build meta
-	AppVersion        string
-	Targets           string
-	MultiArch         bool
-	IterativeBuild    bool
-	KeepBinary        bool
-	InstallerLanguage string
-	Debug             bool
-	OutDir            string
-	Platform          string // "current" | "darwin" | "windows" | "linux"
-	KeepTmp           bool
-	InstallDeps       bool // attempt to install missing system webview deps (apt)
+	AppVersion  string
+	Debug       bool
+	OutDir      string
+	Platform    string // "current" | "darwin" | "windows" | "linux"
+	KeepTmp     bool
+	InstallDeps bool // attempt to install missing system webview deps (apt)
 }
 
 // ---- Template helpers (consumed by the v3 project templates) ----
@@ -99,6 +93,14 @@ func (c *AppConfig) ZoomFloat() float64 {
 		return 1.0
 	}
 	return float64(c.Window.Zoom) / 100.0
+}
+
+// IsLocal reports whether the window loads embedded local content rather than a
+// remote URL. Window.URLType is the single source of truth for this: the Pake
+// config, the positional argument and --use-local-file all write that one field,
+// so the last one to run wins and the two can never disagree.
+func (c *AppConfig) IsLocal() bool {
+	return c.Window.URLType == "local"
 }
 
 // AnyTray reports whether any platform wants a system tray.
@@ -146,8 +148,8 @@ func (c *AppConfig) Summary() string {
 	fmt.Fprintf(&b, "  Proxy          %s\n", orDefault(c.ProxyURL, "<none>"))
 	fmt.Fprintf(&b, "  Inject         %d snippet(s)\n", len(c.Inject))
 	fmt.Fprintf(&b, "  MultiInstance  %t\n", c.MultiInstance)
-	fmt.Fprintf(&b, "  Build          version=%s targets=%s multiArch=%t debug=%t out=%s platform=%s\n",
-		c.AppVersion, orDefault(c.Targets, "<platform default>"), c.MultiArch, c.Debug, c.OutDir, c.Platform)
+	fmt.Fprintf(&b, "  Build          version=%s debug=%t out=%s platform=%s\n",
+		c.AppVersion, c.Debug, c.OutDir, c.Platform)
 	return b.String()
 }
 
