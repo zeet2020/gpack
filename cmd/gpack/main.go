@@ -20,7 +20,7 @@ import (
 )
 
 // version is the gpack tool version (distinct from --app-version, the built app's version).
-const version = "0.1.0"
+const version = "0.2.0"
 
 func main() {
 	if err := newRootCmd().Execute(); err != nil {
